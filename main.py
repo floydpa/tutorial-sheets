@@ -1,12 +1,6 @@
 import pandas as pd
-import gspread
-from google.oauth2.service_account import Credentials
 
-scopes   = ["https://www.googleapis.com/auth/spreadsheets"]
-creds    = Credentials.from_service_account_file("credentials.json", scopes=scopes)
-client   = gspread.authorize(creds)
-sheet_id = "1-W8w2t3HXCG9zNy6RQ4w12zkCrX_jntvQ24xEinhxG4"
-workbook = client.open_by_key(sheet_id)
+from wb import WbIncome
 
 
 def read_sample(workbook):
@@ -32,29 +26,6 @@ def read_sheets(workbook):
     
     return df
 
-
-def read_google_sheet_to_df(workbook, worksheet_name):
-    """
-    Reads a worksheet from a Google Spreadsheet into a Pandas DataFrame.
-    
-    Args:
-        workbook: Handle for workbook opened by authorised client.
-        worksheet_name (str): Name of the worksheet to read.
-    
-    Returns:
-        pd.DataFrame: The worksheet data as a Pandas DataFrame.
-    """
-
-    # Get the worksheet by name
-    worksheet = workbook.worksheet(worksheet_name)
-
-    # Get all data from the worksheet
-    data = worksheet.get_all_records()
-
-    # Convert the data to a pandas DataFrame
-    df = pd.DataFrame(data)
-
-    return df
 
 def add_values(workbook):
     values = [
@@ -82,13 +53,41 @@ def add_values(workbook):
     sheet.format("A1:C1", {"textFormat": {"bold": True}})
 
 
-# --- Test interface
-# read_sample(workbook)
+def hl_add_by_security(workbook, df):
+    
+    # values without the column names
+    values = df.values.tolist()
+    # Insert list containing column headings
+    hdr = list(df.columns.values)
+    values.insert(0, hdr)
 
-# --- Get contents of a worksheet into a dataframe
-# worksheet_name = "By Security"
-# df = read_google_sheet_to_df(workbook, worksheet_name)
-# print(df)
+    worksheet_list = map(lambda x: x.title, workbook.worksheets())
+    new_worksheet_name = "HL By Security"
+
+    if new_worksheet_name in worksheet_list:
+        sheet = workbook.worksheet(new_worksheet_name)
+    else:
+        sheet = workbook.add_worksheet(new_worksheet_name, rows=len(values), cols=len(hdr))
+
+    sheet.clear()
+
+    range = f"A1:{chr(ord('A')+len(hdr)-1)}{len(values)}"
+    sheet.update(range, values)
+
+    hrange = f"A1:{chr(ord('A')+len(hdr)-1)}1"
+    sheet.format(hrange, {"textFormat": {"bold": True}})
+
+
+# Open the main Google Sheets workbook
+ForeverIncome = WbIncome()
+workbook = ForeverIncome.workbook()
+
+# --- Test interface
+read_sample(workbook)
+
+# hl_add_by_security(workbook, df)
+
+
 
 # --- Append all worksheets into a single dataframe
 # df = read_sheets(workbook)
