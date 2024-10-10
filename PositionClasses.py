@@ -3,12 +3,13 @@ import logging
 from Breakdown import SectorAllocation
 
 class Position:
-    def __init__(self, security, quantity, price, value, vdate):
+    def __init__(self, security, quantity, price, value, cost, vdate):
         self._account = None
         self._security = security
         self._quantity = quantity
         self._price = price
         self._value = value
+        self._cost = cost
         self._vdate = vdate
         self._sa = SectorAllocation(security.sector(), value)
         security.set_price(price)
@@ -17,6 +18,9 @@ class Position:
 
     def set_account(self, account):
         self._account = account
+
+    def account(self):
+        return self._account
 
     def username(self):
         return self._account.username()
@@ -56,6 +60,9 @@ class Position:
 
     def value(self):
         return self._value
+
+    def cost(self):
+        return self._cost
 
     def vdate(self):
         return self._vdate

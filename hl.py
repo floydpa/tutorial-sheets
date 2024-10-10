@@ -4,8 +4,6 @@
 
 import pandas as pd
 
-from wb import WbIncome
-
 
 def normalised(df):
     # Use str.extract() to split the 'value' column
@@ -78,6 +76,9 @@ class WsDividendsHL:
     
 
 if __name__ == '__main__':
+
+    from wb import WbIncome
+    
     # Open Google Sheets workbook
     ForeverIncome = WbIncome()
 
@@ -93,4 +94,5 @@ if __name__ == '__main__':
     # Show aggregated data
     print(hl.aggregated())
     
+
     

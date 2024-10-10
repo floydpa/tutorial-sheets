@@ -1,6 +1,8 @@
 import pandas as pd
 
 from wb import WbIncome
+from hl import WsDividendsHL
+from secinfo import WsSecInfo, WS_SECURITY_INFO, secinfo_dir
 
 
 def read_sample(workbook):
@@ -27,17 +29,8 @@ def read_sheets(workbook):
     return df
 
 
-def add_values(workbook):
-    values = [
-        ["Name", "Price", "Quantity"],
-        ["Basketball", 29.99, 1],
-        ["Jeans", 39.99, 4],
-        ["Soap", 7.99, 3],
-    ]
-
+def add_rows(new_worksheet_name, workbook, rows):
     worksheet_list = map(lambda x: x.title, workbook.worksheets())
-    new_worksheet_name = "Values"
-
     if new_worksheet_name in worksheet_list:
         sheet = workbook.worksheet(new_worksheet_name)
     else:
@@ -45,10 +38,10 @@ def add_values(workbook):
 
     sheet.clear()
 
-    sheet.update(f"A1:C{len(values)}", values)
+    sheet.update(f"A1:C{len(values)}", rows)
 
-    sheet.update_cell(len(values) + 1, 2, "=sum(B2:B4)")
-    sheet.update_cell(len(values) + 1, 3, "=sum(C2:C4)")
+    sheet.update_cell(len(rows) + 1, 2, "=sum(B2:B4)")
+    sheet.update_cell(len(rows) + 1, 3, "=sum(C2:C4)")
 
     sheet.format("A1:C1", {"textFormat": {"bold": True}})
 
@@ -82,16 +75,39 @@ def hl_add_by_security(workbook, df):
 ForeverIncome = WbIncome()
 workbook = ForeverIncome.workbook()
 
+#------------------------------------------------------------------------------
+# SecurityInfo - Create/Update Security Information sheet based on json files
+
+if True:
+    sec_info = WsSecInfo(ForeverIncome, secinfo_dir)
+    ForeverIncome.df_to_worksheet(sec_info.df(), WS_SECURITY_INFO)
+
+#------------------------------------------------------------------------------
+# By SecurityHL - Create/Update sheet with aggregate dividends from 'hl'
+
+if False:
+    hl = WsDividendsHL(ForeverIncome)
+    df = hl.aggregated()
+    ForeverIncome.df_to_worksheet(df, "By SecurityHL")
+
+#------------------------------------------------------------------------------
+
 # --- Test interface
-read_sample(workbook)
+# read_sample(workbook)
 
 # hl_add_by_security(workbook, df)
-
-
 
 # --- Append all worksheets into a single dataframe
 # df = read_sheets(workbook)
 # print(df)
 
 # --- Add values to a worksheet
-# add_values(workbook)
+# values = [
+#     ["Name", "Price", "Quantity"],
+#     ["Basketball", 29.99, 1],
+#     ["Jeans", 39.99, 4],
+#     ["Soap", 7.99, 3],
+# ]
+# add_rows("Values", workbook, values)
+
+

@@ -15,18 +15,24 @@ class SecurityUniverse():
         logging.debug("SecurityUniverse(%s)"%(SecurityInfoDir))
         self._securities = {}
         self._aliases = {}
-        for name in os.listdir(self._rootdir):
-            full_path = self._rootdir + '/' + name
+        for filename in os.listdir(self._rootdir):
+            full_path = self._rootdir + '/' + filename
             if os.path.isdir(full_path):
                 continue
-            s = self.load_security(full_path)
-            self.add_security(name, s)
-            if s.ISIN():
-                self.add_alias(s.ISIN(), name)
-            if s.SEDOL():
-                self.add_alias(s.SEDOL(), name)
-            if s.alias():
-                self.add_alias(s.alias(), name)
+            sec = self.load_security(full_path)
+            self.add_security(sec.sname(), sec)
+            if sec.ISIN():
+                self.add_alias(sec.ISIN(), sec.sname())
+            if sec.SEDOL():
+                self.add_alias(sec.SEDOL(),sec.sname())
+            if sec.alias():
+                self.add_alias(sec.alias(), sec.sname())
+        
+    def securities(self):    
+        return self._securities
+    
+    def aliases(self):
+        return self._aliases
 
     def add_security(self, name, defn):
         self._securities[name] = defn
@@ -76,6 +82,8 @@ class SecurityUniverse():
             secname = self._aliases[name]
             return (self._securities[secname])
         else:
+            print("security_names=%s"%(self.security_names()))
+            print("alias_names=%s"%(self.alias_names()))
             errstr = "ERROR: Security lookup(%s)" % (name)
             assert False, errstr
 
@@ -205,7 +213,10 @@ class Security:
     def sec_yield(self):
         annual_amount = self.annual_dividend_amount()
         if annual_amount > 0.0:
-            yld = annual_amount * 100.0 / self.price()
+            try:
+                yld = annual_amount * 100.0 / self.price()
+            except:
+                yld = 0.0
         elif 'fund-yield' in self._data.keys():
             yld = self._data['fund-yield']
         else:
@@ -230,6 +241,9 @@ class Security:
             annual_amount = self.sec_yield() * self.price() / 100.0
         return annual_amount
 
+    def data(self):
+        return self._data
+    
     def sname(self):
         return self._data['sname']
 
@@ -461,6 +475,26 @@ if __name__ == '__main__':
     secu  = SecurityUniverse(secinfo_dir)
     # uport = UserPortfolios(secu)
 
-    for sec in secu.list_securities('IT'):
-        print("sec=%s" % (sec))
+    entries_to_remove = ('info', 'divis','mdate','annual-income','asset-allocation')
+    
     print()
+    lk = []
+    for sec in secu.securities():
+        print("sec=%s" % (sec))
+        defn = secu.find_security(sec).data()
+
+        # Get rid of unwanted tags
+        for k in entries_to_remove:
+            defn.pop(k, None)
+        
+        for k in defn.keys():
+            print("  %s=%s"%(k,defn[k]))
+            if k not in lk:
+                lk.append(k)
+
+    print()
+    print(lk)
+
+
+
+    

@@ -13,6 +13,7 @@ from pathlib import Path
 from SecurityClasses import SecurityUniverse
 from PositionClasses import Position
 
+
 def platformCode_to_class(code):
     return getattr(sys.modules[__name__], code)
 
@@ -38,9 +39,9 @@ class Platform:
         if summary_file is None:
             summary_file = self.latest_file(userCode,accountType)
         self.set_vdate(summary_file)
+        print("SUMMARY FILE %s", summary_file)
         df = pd.read_csv(summary_file)
-        # print(summary_file)
-        # print(df)
+        print("DATAFRAME:\n%s", df)
         labels = ['Investment', 'Quantity', 'Price', 'Value (£)']
         for n in range(0, len(df)):
             inv = df['Investment'][n]
@@ -174,13 +175,14 @@ class AJB(Platform):
             qty = float(re.sub(',', '', df['Quantity'][n]))
             price = float(df['Price'][n]) * 100.0
             value = float(re.sub(',', '', df['Value (£)'][n]))
+            cost  = float(re.sub(',', '', df['Cost (£)'][n]))
 
             if sym in ('Cash GBP'):
                 security = secu.find_security('Cash')
             else:
                 security = secu.find_security(sym)
 
-            pos = Position(security, qty, price, value, self.vdate())
+            pos = Position(security, qty, price, value, cost, self.vdate())
             # print("New Position=%s" % (pos))
             positions.append(pos)
 
@@ -207,25 +209,121 @@ class AJB(Platform):
         # Remove the source file from the download area
         self.update_latest_link(filename, destfile, destlink)
 
+
+class II(Platform):
+    def __init__(self):
+        Platform.__init__(self)
+        self._fullname = "Interactive Investor"
+
+    def download_filename(self, userCode, accountType):
+        dt = datetime.datetime.now().strftime("%Y%m%d")
+        destname = "%s/%s_%s_%s_%s.csv" % (self.download_dirname(), userCode, self.name(), accountType, dt)
+
+        # Get list of files in download directory, newest first
+        paths = sorted(Path(self.download_dirname()).iterdir(), key=os.path.getmtime, reverse=True)
+        for f in paths:
+            print("downloaded file=", f)
+            # if re.search('^.*\.csv$', f):
+            #     print("csvfile=", f)
+            print("destname=", destname)
+            os.rename(f, destname)
+            break
+
+        return destname
+
+    def download_formname(self):
+        return "FileDownloadCashForm"
+
+    def load_positions(self, secu, userCode, accountType, summary_file=None):
+        positions = []
+        if summary_file is None:
+            summary_file = self.latest_file(userCode,accountType)
+        self.set_vdate(summary_file)
+        df = pd.read_csv(summary_file)
+        logging.debug("load_positions dtypes=%s"%df.dtypes)
+        # print(df.head(5))
+        # labels = ['Symbol', 'Qty', 'Price', 'Market Value']
+
+        for n in range(0, len(df)):
+            sym = df['Symbol'][n]
+            # print("Symbol=%s" % (sym))
+            qty = df['Qty'][n]
+            # print("Qty=%s" % (qty))
+            qty = float(re.sub(',', '', str(df['Qty'][n])))
+            if '£' in str(df['Price'][n]):
+                price = float(re.sub('[,£]', '', str(df['Price'][n]))) * 100.0
+            else:
+                price = float(re.sub('[,p]', '', str(df['Price'][n])))
+            s_value = df['Market Value'][n]
+            s_cost = df['Book Cost'][n]
+
+            value = float(re.sub('[,£]', '', s_value))
+            cost  = float(re.sub('[,£]', '', s_cost))
+
+            if sym in ('Cash GBP.L'):
+                security = secu.find_security('Cash')
+            else:
+                security = secu.find_security(sym)
+
+            pos = Position(security, qty, price, value, cost, self.vdate())
+            # print("New Position=%s" % (pos))
+            positions.append(pos)
+
+        return positions
+
+    def update_positions(self, userCode, accountType, cashAmount):
+        destfile = self.dated_file(userCode, accountType)
+        destlink = self.latest_file(userCode,accountType)
+        filename = self.download_filename(userCode,accountType)
+
+        logging.debug("source=%s" % (filename))
+        logging.debug("destfile=%s" % (destfile))
+        logging.debug("destlink=%s" % (destlink))
+
+        # Copy all lines across adding in cash on the final line
+        fpout = open(destfile, "w")
+        with open(filename, 'r', encoding='utf-8-sig') as fpin:
+            for line in fpin:
+                # Strip the leading feff characters from header line
+                if "Symbol," in line:
+                    line = 'Symbol,Name,Qty,Price,Change,Chg %,Market Value £,Market Value,Book Cost,Gain,Gain %,Average Price\n'
+                    line = re.sub('^.*Symbol,', 'Symbol,', line)
+
+                # Strip Totals lines at the end
+                if not re.match('"",', line):
+                    fpout.write(line)
+
+            line = '"Cash","Cash GBP","%.2f","1","","","£%.2f","£%.2f","£%.2f","","",""\n' % (cashAmount, cashAmount, cashAmount, cashAmount)
+            fpout.write(line)
+
+        fpout.close()
+        fpin.close()
+
+        # Update latest link to point to newly created file
+        # Remove the source file from the download area
+        self.update_latest_link(filename, destfile, destlink)
+
+
+
 if __name__ == '__main__':
     
     logging.basicConfig(format='%(levelname)s:%(message)s', level=logging.DEBUG)
     
     # Load details of all securities held in positions
     secinfo_dir = os.getenv('HOME') + '/SecurityInfo'
-    secu  = SecurityUniverse(secinfo_dir)
+    secu = SecurityUniverse(secinfo_dir)
 
     # uport = UserPortfolios(secu)
  
     # a = platformCode_to_class('AJB')()
     # print(a.name())
 
-    p = AJB()
-    print(p.name(True))
-    print(p.latest_file('P','ISA'))
+    # p = AJB()
+    # print(p.name(True))
+    # print(p.latest_file('P','ISA'))
 
     # Set 'latest' symlink to point to dated file associated with YYYYMMDD (today)
     # There's no need to specify a cash amount for AJB as it's in the downloaded file
-    # p.update_positions('P','ISA')
+
 
 

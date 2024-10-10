@@ -1,6 +1,9 @@
 # Sensitive files
 credentials.json
 
+# Temporary directory
+tmp/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

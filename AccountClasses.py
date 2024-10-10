@@ -2,8 +2,15 @@
 
 import os
 import logging
+import pandas as pd
+
 from SecurityClasses import SecurityUniverse
 from PlatformClasses import platformCode_to_class
+
+from wb import WbIncome
+
+# Worksheet name
+WS_POSITION_INCOME = "Pos Income"
 
 
 class Account:
@@ -21,7 +28,10 @@ class Account:
         self._vdate = self._platform.vdate()
 
     def __repr__(self):
-        return "ACCOUNT(%s,%s)" % (self.platform(), self.account_type())
+        s = "ACCOUNT(%s,%s)" % (self.platform(), self.account_type())
+        for pos in self.positions():
+            s += "\n%s"%(pos)
+        return s
 
     def username(self):
         return self._username
@@ -39,6 +49,7 @@ class Account:
         return self._positions
 
     def add_position(self, pos):
+        # logging.debug("add_position(%s)", pos)
         self._positions.append(pos)
 
     def account_type(self, fullname=False):
@@ -300,12 +311,71 @@ if __name__ == '__main__':
     from PortfolioClasses import UserPortfolioGroup
 
     logging.basicConfig(format='%(levelname)s:%(message)s', level=logging.DEBUG)
-    secu  = SecurityUniverse()
-    pgrp = UserPortfolioGroup(secu)
 
-    print(pgrp)
+    # Load all security information
+    secinfo_dir = os.getenv('HOME') + '/SecurityInfo'
+    secu = SecurityUniverse(secinfo_dir)
 
-    # ag = AccountGroup(pgrp.accounts(),'User1','Pens')
-    # print(ag.accounts())
+    # Load portfolios for all user accounts
+    accinfo_dir = './tmp'
+    pgrp = UserPortfolioGroup(secu, accinfo_dir)
+    logging.info("\npgrp=%s\n"%pgrp)
 
-    # print(ag.positions())
+    ag = AccountGroup(pgrp.accounts(),None,None)
+    logging.info("ag.accounts=%s\n"%ag.accounts())
+    logging.info("ag.positions=%s\n"%ag.positions())
+
+    pos_list = []
+
+    # Position detail
+    # Who	AccType	Platform	AccountId	SecurityId	Name	                        Quantity	Book Cost	Value (£)
+    # Paul	ISA	    II	        P_ISA_II	TMPL.L	    Temple Bar Investment Trust plc	11,972	    £20,000	    £31,905
+ 
+    for pos in ag.positions():
+        acc = pos.account()
+        acc_id = "%s_%s_%s" % (acc.usercode(), pos.platform(), pos.account_type())
+        p = {
+            'Who':          pos.username(),
+            'AccType':      pos.account_type(),
+            'Platform':     pos.platform(),
+            'AccountId':    acc_id,
+            'SecurityId':   pos.sname(),
+            'Name':         pos.lname(),
+            'Quantity':     pos.quantity(),
+            'BookCost':     pos.cost(),
+            'Value':        pos.value(),
+            'ValueDate':    pos.vdate()
+            }
+        print(p)
+        pos_list.append(p)
+    
+    df = pd.DataFrame(pos_list).sort_values(['Who','AccType','Platform','Value'],ascending=[True,True,True,False]).reset_index(drop=True)
+    # df['VLOOKUP Formula'] = df.index.to_series().apply(lambda x: f"=VLOOKUP(E{x + 2},'By Security'!$A:$B,2,FALSE)")
+    print(df.dtypes)
+    print(df)
+
+     # Use new df to add/update position income sheet
+    ForeverIncome = WbIncome()
+    ForeverIncome.df_to_worksheet(df, WS_POSITION_INCOME, 0, 4)
+
+    sheet = ForeverIncome.worksheet(WS_POSITION_INCOME)
+
+    # Add 4 columns of formulas with dividend & income information
+    formulas = []
+    formulas.append(['Dividend','Unit','Yield','Income'])
+    for r in range(2,len(df)+2):
+        divi = f"=VLOOKUP($E{r},'By Security'!$A:$E,4,FALSE)"
+        unit = f"=VLOOKUP($E{r},'By Security'!$A:$E,5,FALSE)"
+        yld  = f"=N{r}/I{r}"
+        inc  = f'=IF(L{r}="p",G{r},I{r})*K{r}/100'
+        row  = [divi,unit,yld,inc]
+        # sheet.update_cell(r, 11, f"=VLOOKUP($E{r},'By Security'!$A:$E,4,FALSE)")
+        formulas.append(row)
+
+    # Update the range with formulas
+    r = len(df)+1
+    cell_range = f"K1:N{r}"
+    # print(f"range={cell_range}")
+    # print(formulas)
+    sheet.update(cell_range, formulas, value_input_option='USER_ENTERED')
+    

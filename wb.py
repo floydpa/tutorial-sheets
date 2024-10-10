@@ -18,6 +18,13 @@ class WbIncome:
     def workbook(self):
         return self._workbook
     
+    def worksheet(self, worksheet_name):
+        if worksheet_name in self.worksheet_list():
+            sheet = self.workbook().worksheet(worksheet_name)
+        else:
+            sheet = None
+        return sheet
+
     def worksheet_list(self):
         ws_list = []
         for ws_name in map(lambda x: x.title, self._workbook.worksheets()):
@@ -32,6 +39,28 @@ class WbIncome:
         df = pd.DataFrame(worksheet.get_all_records())
 
         return df
+    
+    def df_to_worksheet(self, df, worksheet_name, add_rows=0, add_cols=0):
+        # Convert DataFrame to list of lists
+        values = df.values.tolist()
+
+        # Insert list containing column headings
+        hdr = list(df.columns.values)
+        values.insert(0, hdr)
+
+        if worksheet_name in self.worksheet_list():
+            sheet = self.workbook().worksheet(worksheet_name)
+        else:
+            sheet = self.workbook().add_worksheet(worksheet_name, rows=len(values)+add_rows, cols=len(hdr)+add_cols)
+
+        sheet.clear()
+
+        range = f"A1:{chr(ord('A')+len(hdr)-1)}{len(values)}"
+        sheet.update(range, values)
+
+        hrange = f"A1:{chr(ord('A')+len(hdr)-1)}1"
+        sheet.format(hrange, {"textFormat": {"bold": True}})
+
 
     def __repr__(self):
         s = "WORKBOOK:"
@@ -44,6 +73,7 @@ if __name__ == '__main__':
     ForeverIncome = WbIncome()
     # print(ForeverIncome)
 
+    # Get contents of 'hl' worksheet as a DataFrame
     df = ForeverIncome.worksheet_to_df("hl")
     print(df)
 
