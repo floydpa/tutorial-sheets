@@ -1,75 +1,30 @@
-import pandas as pd
+import logging
+import os
+
+from SecurityClasses import SecurityUniverse
+from PortfolioClasses import UserPortfolioGroup
+from AccountClasses import AccountGroup
 
 from wb import WbIncome
-from hl import WsDividendsHL
-from secinfo import WsSecInfo, WS_SECURITY_INFO, secinfo_dir
+from wb import WsSecInfo, WsDividendsHL, WsDividendsFE, WsByPosition
 
+#---------------------------------------------------------
+# Directories holding the configuration files
+secinfo_dir = os.getenv('HOME') + '/SecurityInfo'
+accinfo_dir = './tmp'
 
-def read_sample(workbook):
-    worksheet_list = map(lambda x: x.title, workbook.worksheets())
-    for ws_name in worksheet_list:
-        print(ws_name)
+logging.basicConfig(format='%(levelname)s:%(message)s', level=logging.DEBUG)
 
-    values_list = workbook.sheet1.row_values(1)
-    print(values_list)
+# Load security universe
+secu = SecurityUniverse(secinfo_dir)
 
+# Load portfolios for all user accounts
+pgrp = UserPortfolioGroup(secu, accinfo_dir)
+logging.info("\npgrp=%s\n"%pgrp)
 
-def read_sheets(workbook):
-    # Create a list to hold the values
-    values = []
-    
-    # Get all worksheets
-    for ws in workbook.worksheets():
-        # Append the values of the worksheet to values
-        values.extend(ws.get_all_values())
-    
-    # create df from values
-    df = pd.DataFrame(values)
-    
-    return df
-
-
-def add_rows(new_worksheet_name, workbook, rows):
-    worksheet_list = map(lambda x: x.title, workbook.worksheets())
-    if new_worksheet_name in worksheet_list:
-        sheet = workbook.worksheet(new_worksheet_name)
-    else:
-        sheet = workbook.add_worksheet(new_worksheet_name, rows=10, cols=10)
-
-    sheet.clear()
-
-    sheet.update(f"A1:C{len(values)}", rows)
-
-    sheet.update_cell(len(rows) + 1, 2, "=sum(B2:B4)")
-    sheet.update_cell(len(rows) + 1, 3, "=sum(C2:C4)")
-
-    sheet.format("A1:C1", {"textFormat": {"bold": True}})
-
-
-def hl_add_by_security(workbook, df):
-    
-    # values without the column names
-    values = df.values.tolist()
-    # Insert list containing column headings
-    hdr = list(df.columns.values)
-    values.insert(0, hdr)
-
-    worksheet_list = map(lambda x: x.title, workbook.worksheets())
-    new_worksheet_name = "HL By Security"
-
-    if new_worksheet_name in worksheet_list:
-        sheet = workbook.worksheet(new_worksheet_name)
-    else:
-        sheet = workbook.add_worksheet(new_worksheet_name, rows=len(values), cols=len(hdr))
-
-    sheet.clear()
-
-    range = f"A1:{chr(ord('A')+len(hdr)-1)}{len(values)}"
-    sheet.update(range, values)
-
-    hrange = f"A1:{chr(ord('A')+len(hdr)-1)}1"
-    sheet.format(hrange, {"textFormat": {"bold": True}})
-
+ag = AccountGroup(pgrp.accounts(),None,None)
+logging.info("ag.accounts=%s\n"%ag.accounts())
+logging.info("ag.positions=%s\n"%ag.positions())
 
 # Open the main Google Sheets workbook
 ForeverIncome = WbIncome()
@@ -79,35 +34,39 @@ workbook = ForeverIncome.workbook()
 # SecurityInfo - Create/Update Security Information sheet based on json files
 
 if True:
-    sec_info = WsSecInfo(ForeverIncome, secinfo_dir)
-    ForeverIncome.df_to_worksheet(sec_info.df(), WS_SECURITY_INFO)
+    sec_info = WsSecInfo(ForeverIncome, secu)
+    sec_info.refresh()
 
 #------------------------------------------------------------------------------
 # By SecurityHL - Create/Update sheet with aggregate dividends from 'hl'
 
-if False:
+if True:
     hl = WsDividendsHL(ForeverIncome)
-    df = hl.aggregated()
-    ForeverIncome.df_to_worksheet(df, "By SecurityHL")
+    print(hl.rawdata())
+    print(hl.normalised())
+    print(hl.aggregated())
+    hl.refresh()
 
 #------------------------------------------------------------------------------
+# By SecurityFE - Create/Update sheet with aggregate dividends from 'fe'
 
-# --- Test interface
-# read_sample(workbook)
+if True:
+    fe = WsDividendsFE(ForeverIncome)
+    print(fe.rawdata())
+    print(fe.normalised())
+    print(fe.aggregated())
+    fe.refresh()
+    
+#------------------------------------------------------------------------------
+# Create sheet 'By Positions' with income attributed to each position
 
-# hl_add_by_security(workbook, df)
+if True:
+    # print(ForeverIncome.get_fillcolour(range_name='By Security!D2'))
+    # print(ForeverIncome.get_fillcolour(range_name='By Security!F2'))
 
-# --- Append all worksheets into a single dataframe
-# df = read_sheets(workbook)
-# print(df)
+    bypos = WsByPosition(ForeverIncome)
+    bypos.refresh(ag.positions())
 
-# --- Add values to a worksheet
-# values = [
-#     ["Name", "Price", "Quantity"],
-#     ["Basketball", 29.99, 1],
-#     ["Jeans", 39.99, 4],
-#     ["Soap", 7.99, 3],
-# ]
-# add_rows("Values", workbook, values)
+
 
 

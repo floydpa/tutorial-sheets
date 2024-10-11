@@ -7,10 +7,7 @@ import pandas as pd
 from SecurityClasses import SecurityUniverse
 from PlatformClasses import platformCode_to_class
 
-from wb import WbIncome
-
-# Worksheet name
-WS_POSITION_INCOME = "Pos Income"
+from wb import WbIncome, WS_POSITION_INCOME
 
 
 class Account:
