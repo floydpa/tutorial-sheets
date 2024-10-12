@@ -6,7 +6,8 @@ from PortfolioClasses import UserPortfolioGroup
 from AccountClasses import AccountGroup
 
 from wb import WbIncome
-from wb import WsSecInfo, WsDividendsHL, WsDividendsFE, WsByPosition
+from wb import WsSecInfo, WsByPosition
+from bysecurity import WsDividendsHL, WsDividendsFE, WsDividendsBySecurity
 
 #---------------------------------------------------------
 # Directories holding the configuration files
@@ -33,14 +34,14 @@ workbook = ForeverIncome.workbook()
 #------------------------------------------------------------------------------
 # SecurityInfo - Create/Update Security Information sheet based on json files
 
-if True:
+if False:
     sec_info = WsSecInfo(ForeverIncome, secu)
     sec_info.refresh()
 
 #------------------------------------------------------------------------------
 # By SecurityHL - Create/Update sheet with aggregate dividends from 'hl'
 
-if True:
+if False:
     hl = WsDividendsHL(ForeverIncome)
     print(hl.rawdata())
     print(hl.normalised())
@@ -50,13 +51,21 @@ if True:
 #------------------------------------------------------------------------------
 # By SecurityFE - Create/Update sheet with aggregate dividends from 'fe'
 
-if True:
+if False:
     fe = WsDividendsFE(ForeverIncome)
     print(fe.rawdata())
     print(fe.normalised())
     print(fe.aggregated())
     fe.refresh()
     
+#------------------------------------------------------------------------------
+# By Security - Create/Update sheet with dividends for all securities
+
+if False:
+    bySecurity = WsDividendsBySecurity(ForeverIncome)
+    print(bySecurity.aggregated())
+    bySecurity.refresh()
+
 #------------------------------------------------------------------------------
 # Create sheet 'By Positions' with income attributed to each position
 

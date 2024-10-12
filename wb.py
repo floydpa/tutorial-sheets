@@ -8,21 +8,25 @@ import gspread
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 
+from wbformat import fmt_req_font, fmt_req_autofilter
+from wbformat import fmt_req_autoresize, fmt_hdr_bgcolor
+from wbformat import fmt_columns_decimal, fmt_columns_percentage
+from wbformat import fmt_columns_currency, fmt_columns_hjustify
+from wbformat import RGB_GREY
+
 
 # Worksheets used as source information
 WS_HL_DIVIDENDS     = "hl"             # Hargreaves Lansdown dividend information
 WS_FE_DIVIDENDS     = "fe"             # FE Trustnet dividend information
+WS_OTHER_DIVIDENDS  = "other"          # Other dividend information
 
 # Worksheets created/updates
 WS_SECURITY_INFO    = "Sec Info"       # "Security Information"
-WS_POSITION_INCOME  = "Pos Income"     # "By Position"
-WS_SEC_DIVIDENDS_HL = "By SecurityHL"
-WS_SEC_DIVIDENDS_FE = "By SecurityFE"
+WS_POSITION_INCOME  = "By Position"
+WS_SEC_DIVIDENDS_HL = "By SecurityHL"  # Temporary
+WS_SEC_DIVIDENDS_FE = "By SecurityFE"  # Temporary
+WS_SEC_DIVIDENDS    = "By Security (new)"
 
-# RGB values for cell fill colours
-RGB_BLUE   = {"red": 0.81, "green": 0.89, "blue": 0.95}
-RGB_YELLOW = {"red": 0.95, "green": 1.00, "blue": 0.80}
-RGB_GREY   = {"red": 0.80, "green": 0.80, "blue": 0.80}
 
 #-----------------------------------------------------------------------
 # Workshet Object for 'Security Info'
@@ -82,230 +86,6 @@ class WsSecInfo:
 
     def __repr__(self):
         return self.df()
-
-
-#-----------------------------------------------------------------------
-# Handling for dividend information taken from Hargreaves Lansdown
-#-----------------------------------------------------------------------
-
-class WsDividendsHL:
-    def __init__(self, forever_income):
-        self._forever_income = forever_income
-        self._workbook = forever_income.workbook()
-        self._wsname   = WS_SEC_DIVIDENDS_HL
-
-        # Read 'hl' sheet into a DataFrame
-        self._raw_df = self._forever_income.worksheet_to_df(WS_HL_DIVIDENDS)
-
-        # Convert dividend information to generic format
-        self._norm_df = self.normalise_divis()
-
-        # Aggregate normalised data to get annual dividend information
-        self._agg_df = self.aggregate_divis()
-
-    def workbook(self):
-        return self._workbook
-    
-    def wsname(self):
-        return self._wsname
-    
-    def rawdata(self):
-        return self._raw_df
-    
-    def normalised(self):
-        return self._norm_df
-
-    def aggregated(self):
-        return self._agg_df
-    
-    def normalise_divis(self):
-        df = self.rawdata()
-
-        # Use str.extract() to split the 'value' column
-        df[['Amount', 'Unit']] = df['Payment'].str.extract(r'([0-9\.]+)([a-zA-Z]+)')
-
-        # Convert 'Amount' column to float
-        df['Amount'] = df['Amount'].astype(float)
-
-        # Convert date columns from DD/MM/YYYY to YYYYMMDD as strings
-        df['ExDivDate'] = df['ExDivDate'].str.replace(r'(\d{2})/(\d{2})/(\d{4})', r'\3\2\1', regex=True)
-        df['PaymentDate'] = df['PaymentDate'].str.replace(r'(\d{2})/(\d{2})/(\d{4})', r'\3\2\1', regex=True)
-
-        # Drop 'Payment' column as it's no longer needed
-        df = df.drop(columns=['Payment'])
-
-        self._norm_df = df
-
-        return df
-
-    def aggregate_divis(self):   
-        # Group by 'securityId' and aggregate
-        aggregated_df = self.normalised().groupby('SecurityId').agg(
-            Count=('Amount', 'size'),           # Count of rows per securityId
-            AnnualDividend=('Amount', 'sum'),   # Sum of value per securityId
-            Unit=('Unit', 'min'),               # Retain column Unit
-            OldestExDiv=('ExDivDate', 'min')    # Oldest ex-div date per securityId
-        ).reset_index()
-
-        # Add a new column 'Freq' based on the 'Count' column
-        count_to_freq = {1: 'A', 2: 'S', 4: 'Q', 12: 'M'}
-        aggregated_df['Freq'] = aggregated_df['Count'].map(count_to_freq)
-
-        # Reorder columns
-        aggregated_df = aggregated_df[
-            ['SecurityId','Freq','AnnualDividend','Unit','OldestExDiv']
-        ]
-
-        self._agg_df = aggregated_df
-
-        return aggregated_df
-
-    # Apply formatting to newly created/updated sheet
-    def apply_formatting(self):
-        # Retrieve worksheet details for formatting requests
-        worksheet = self.workbook().worksheet(WS_HL_DIVIDENDS)
-
-        requests = []
-        # Step 1: Change font to Arial size 8
-        requests.append(self._forever_income.fmt_req_font(worksheet))
-        # Step 2: Turn on filters for the first row
-        requests.append(self._forever_income.fmt_req_autofilter(worksheet))
-        # Step 3: Auto resize all columns to fit their content
-        requests.append(self._forever_income.fmt_req_autoreszie(worksheet))
-        # Step 4: Grey fill colour for the header row
-        requests.append(self._forever_income.fmt_hdr_bgcolour(worksheet, RGB_GREY))
-        # Step 5: Blue fill colour for columns 'Annual Dividend' and 'Unit'
-        requests.append(self._forever_income.fmt_columns_bgcolour(worksheet,RGB_BLUE,2,3))
-        # Step 6: Yellow fill colour for column 'OldestExDiv'
-        requests.append(self._forever_income.fmt_columns_bgcolour(worksheet,RGB_YELLOW,4,4))
-
-        # Execute the requests
-        response = self._forever_income.service().spreadsheets().batchUpdate(
-                spreadsheetId=self._forever_income._spreadsheet_id, 
-                body={'requests': requests}
-            ).execute()
-        
-        logging.debug(f"service request response {response}")
-        
-    # Create or update the worksheet for HL dividends
-    def refresh(self):
-        self._forever_income.df_to_worksheet(self.aggregated(), self.wsname())
-        self.apply_formatting()
-
-    def __repr__(self):
-        return self.rawdata()
-    
-
-#-----------------------------------------------------------------------
-# Handling for dividend information taken from FE Trustnet
-#-----------------------------------------------------------------------
-
-class WsDividendsFE:
-    def __init__(self, forever_income):
-        self._forever_income = forever_income
-        self._workbook = forever_income.workbook()
-        self._wsname   = WS_SEC_DIVIDENDS_FE
-
-        # Read 'hl' sheet into a DataFrame
-        self._raw_df = self._forever_income.worksheet_to_df(WS_FE_DIVIDENDS)
-
-        # Convert dividend information to generic format
-        self._norm_df = self.normalise_divis()
-
-        # Aggregate normalised data to get annual dividend information
-        self._agg_df = self.aggregate_divis()
-
-
-    def workbook(self):
-        return self._workbook
-    
-    def wsname(self):
-        return self._wsname
-    
-    def rawdata(self):
-        return self._raw_df
-    
-    def normalised(self):
-        return self._norm_df
-
-    def aggregated(self):
-        return self._agg_df
-
-    def normalise_divis(self):
-        df = self.rawdata()
-        # Convert 'Amount' column to float
-        df['Amount'] = df['DividendAmount'].astype(float)
-
-        # Set Unit as pence
-        df['Unit'] = 'p'
-
-        # Convert date columns from DD.MM.YYYY to YYYYMMDD as strings
-        df['ExDivDate'] = df['ExDivDate'].str.replace(r'(\d{2})\.(\d{2})\.(\d{4})', r'\3\2\1', regex=True)
-        df['PaymentDate'] = df['PaymentDate'].str.replace(r'(\d{2})\.(\d{2})\.(\d{4})', r'\3\2\1', regex=True)
-
-        # Drop columns no longer needed
-        df = df.drop(columns=['DividendType','DividendAmount','TaxIndicator'])
-    
-        self._norm_df = df
-
-        return df
-
-    def aggregate_divis(self):   
-        # Group by 'securityId' and aggregate
-        aggregated_df = self.normalised().groupby('SecurityId').agg(
-            Count=('Amount', 'size'),           # Count of rows per securityId
-            AnnualDividend=('Amount', 'sum'),   # Sum of value per securityId
-            Unit=('Unit', 'min'),               # Retain column Unit
-            OldestExDiv=('ExDivDate', 'min')    # Oldest ex-div date per securityId
-        ).reset_index()
-
-        # Add a new column 'Freq' based on the 'Count' column
-        count_to_freq = {1: 'A', 2: 'S', 4: 'Q', 12: 'M'}
-        aggregated_df['Freq'] = aggregated_df['Count'].map(count_to_freq)
-
-        # Reorder columns
-        aggregated_df = aggregated_df[
-            ['SecurityId','Freq','AnnualDividend','Unit','OldestExDiv']
-        ]
-
-        self._agg_df = aggregated_df
-
-        return aggregated_df
-
-    # Apply formatting to newly created/updated sheet
-    def apply_formatting(self):
-        # Retrieve worksheet details for formatting requests
-        worksheet = self.workbook().worksheet(WS_FE_DIVIDENDS)
-
-        requests = []
-        # Step 1: Change font to Arial size 8
-        requests.append(self._forever_income.fmt_req_font(worksheet))
-        # Step 2: Turn on filters for the first row
-        requests.append(self._forever_income.fmt_req_autofilter(worksheet))
-        # Step 3: Auto resize all columns to fit their content
-        requests.append(self._forever_income.fmt_req_autoreszie(worksheet))
-        # Step 4: Grey fill colour for the header row
-        requests.append(self._forever_income.fmt_hdr_bgcolour(worksheet, RGB_GREY))
-        # Step 5: Blue fill colour for columns 'Annual Dividend' and 'Unit'
-        requests.append(self._forever_income.fmt_columns_bgcolour(worksheet,RGB_BLUE,2,3))
-        # Step 6: Yellow fill colour for column 'OldestExDiv'
-        requests.append(self._forever_income.fmt_columns_bgcolour(worksheet,RGB_YELLOW,4,4))
-
-        # Execute the requests
-        response = self._forever_income.service().spreadsheets().batchUpdate(
-                spreadsheetId=self._forever_income._spreadsheet_id, 
-                body={'requests': requests}
-            ).execute()
-        
-        logging.debug(f"service request response {response}")
-        
-    # Create or update the worksheet for HL dividends
-    def refresh(self):
-        self._forever_income.df_to_worksheet(self.aggregated(), self.wsname())
-        self.apply_formatting()
-
-    def __repr__(self):
-        return self.rawdata()
 
 
 #-----------------------------------------------------------------------
@@ -378,14 +158,25 @@ class WsByPosition:
 
         requests = []
         # Step 1: Change font to Arial size 8
-        requests.append(self._forever_income.fmt_req_font(worksheet))
+        requests.append(fmt_req_font(worksheet))
         # Step 2: Turn on filters for the first row
-        requests.append(self._forever_income.fmt_req_autofilter(worksheet))
-        # Step 3: Auto resize all columns to fit their content
-        requests.append(self._forever_income.fmt_req_autoreszie(worksheet))
-        # Step 4: Grey fill colour for the header row
-        requests.append(self._forever_income.fmt_hdr_bgcolour(worksheet, RGB_GREY))
-
+        requests.append(fmt_req_autofilter(worksheet))
+        # Step 3: Grey fill colour for the header row
+        requests.append(fmt_hdr_bgcolor(worksheet, RGB_GREY))
+        # Step 4: Format Quantity and Dividend as decimsl with up to 4dp, G=6, K=10     
+        requests.append(fmt_columns_decimal(worksheet, 6, 7))
+        requests.append(fmt_columns_decimal(worksheet, 10, 11))
+        # Step 5: Format Yield as perentage with 2dp, M=12
+        requests.append(fmt_columns_percentage(worksheet, 12, 13))
+        # Step 6: Format BookCost, Value and Income as currency H=7,I=8,N=13
+        requests.append(fmt_columns_currency(worksheet, 7, 9))
+        requests.append(fmt_columns_currency(worksheet, 13, 14))
+        # Step 7: Auto resize all columns to fit their content
+        requests.append(fmt_req_autoresize(worksheet))
+        # Step 8: Right justify J (9) and centre justify L (11)
+        requests.append(fmt_columns_hjustify(worksheet, 9, 10, 'RIGHT'))
+        requests.append(fmt_columns_hjustify(worksheet, 11, 12, 'CENTER'))
+                        
         # Execute the requests
         response = self._forever_income.service().spreadsheets().batchUpdate(
                 spreadsheetId=self._forever_income._spreadsheet_id, 
@@ -453,6 +244,9 @@ class WbIncome:
     def service(self):
         return self._service
     
+    def spreadsheet_id(self):
+        return self._spreadsheet_id
+    
     def worksheet(self, worksheet_name):
         if worksheet_name in self.worksheet_list():
             sheet = self.workbook().worksheet(worksheet_name)
@@ -496,89 +290,6 @@ class WbIncome:
         hrange = f"A1:{chr(ord('A')+len(hdr)-1)}1"
         sheet.format(hrange, {"textFormat": {"bold": True}})
 
-    def fmt_req_font(self, worksheet):
-        return {
-            'repeatCell': {
-                'range': {
-                    'sheetId': worksheet.id,
-                    },
-                'cell': {
-                    'userEnteredFormat': {
-                        'textFormat': {
-                            'fontFamily': 'Arial',
-                            'fontSize': 8
-                            }
-                        }
-                    },
-                'fields': 'userEnteredFormat.textFormat'
-            }
-        } 
-    
-    def fmt_req_autofilter(self, worksheet):
-        return {
-            'setBasicFilter': {
-                'filter': {
-                    'range': {
-                        'sheetId': worksheet.id,
-                        'startRowIndex': 0,  # First row
-                        'endRowIndex': 1,    # Filter only on the first row
-                    }
-                }
-            }
-        }       
-
-    def fmt_req_autoreszie(self,worksheet):
-        return {
-            'autoResizeDimensions': {
-                'dimensions': {
-                    'sheetId': worksheet.id,
-                    'dimension': 'COLUMNS',
-                    'startIndex': 0,  # First column (A)
-                    'endIndex': worksheet.col_count  # Resize up to the last column
-                }
-            }
-        }               
-    
-    def fmt_hdr_bgcolour(self, worksheet, colour):
-        return {
-            'repeatCell': {
-                'range': {
-                    'sheetId': worksheet.id,
-                    'startRowIndex': 0,  # First row
-                    'endRowIndex': 1,    # Only apply to the first row
-                },
-                'cell': {
-                    'userEnteredFormat': {
-                        'backgroundColor': colour
-                    }
-                },
-                'fields': 'userEnteredFormat.backgroundColor'
-            }
-        }
-
-    def fmt_columns_bgcolour(self, worksheet, colour, cfirst, clast, rfirst=1, rlast=-1):
-        if rlast < 0:
-            # Get the last row number
-            all_values = worksheet.get_all_values()
-            rlast = len(all_values)  # This gives the last row with data
-
-        return {
-            'repeatCell': {
-                'range': {
-                    'sheetId': worksheet.id,
-                    'startRowIndex':    rfirst,  # 0-indexed
-                    'endRowIndex':      rlast,   # 0-indexed
-                    'startColumnIndex': cfirst,  # 0-indexed, e.g. D = 3
-                    'endColumnIndex':   clast+1, # 0-indexed, but end is exclusive
-                },
-                'cell': {
-                    'userEnteredFormat': {
-                        'backgroundColor': colour
-                    }
-                },
-                'fields': 'userEnteredFormat.backgroundColor'
-            }
-        }
 
     def get_fillcolour(self, range_name='Sheet1!A1'):
         # Retrieve cell format data
