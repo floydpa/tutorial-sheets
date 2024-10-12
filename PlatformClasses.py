@@ -304,6 +304,38 @@ class II(Platform):
         self.update_latest_link(filename, destfile, destlink)
 
 
+class AV(Platform):
+    def __init__(self):
+        Platform.__init__(self)
+        self._fullname = "Aviva"
+
+    def load_positions(self, secu, userCode, accountType, summary_file=None):
+        positions = []
+        if summary_file is None:
+            summary_file = self.latest_file(userCode,accountType)
+        self.set_vdate(summary_file)
+        df = pd.read_csv(summary_file)
+        labels = ['Symbol', 'Qty', 'Price', 'Market Value']
+
+        for n in range(0, len(df)):
+            sym = df['Symbol'][n]
+            # print("SYM=%s" % (sym))
+            qty = float(re.sub(',', '', str(df['Qty'][n])))
+            price = float(re.sub('[,p]', '', str(df['Price'][n])))
+            mv = df['Market Value'][n]
+            value = float(re.sub('[,£]', '', mv))
+            cost = value
+            security = secu.find_security(sym)
+            pos = Position(security, qty, price, value, cost, self.vdate())
+            # print("New Position=%s" % (pos))
+            positions.append(pos)
+
+        return positions
+
+    def download_formname(self):
+        return "getPositionsForm"
+
+
 
 if __name__ == '__main__':
     
@@ -324,6 +356,5 @@ if __name__ == '__main__':
 
     # Set 'latest' symlink to point to dated file associated with YYYYMMDD (today)
     # There's no need to specify a cash amount for AJB as it's in the downloaded file
-
 
 
