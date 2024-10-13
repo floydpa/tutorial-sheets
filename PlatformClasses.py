@@ -49,9 +49,10 @@ class Platform:
             qty = float(re.sub(',', '', str(df['Quantity'][n])))
             price = float(df['Price'][n])
             value = float(re.sub(',', '', str(df['Value (£)'][n])))
+            cost  = value
 
             security = secu.find_security(sym)
-            pos = Position(security, qty, price, value, self.vdate())
+            pos = Position(security, qty, price, value, cost, self.vdate())
 
             # print("New Position=%s" % (pos))
             positions.append(pos)
@@ -336,6 +337,17 @@ class AV(Platform):
         return "getPositionsForm"
 
 
+class NPI(Platform):
+    def __init__(self):
+        Platform.__init__(self)
+        self._fullname = "Phoenix NPI"
+
+    def download_formname(self):
+        return "CashForm"
+
+    def update_positions(self, userCode, accountType, cashAmount):
+        return self.update_savings(userCode, accountType, cashAmount)
+    
 
 if __name__ == '__main__':
     

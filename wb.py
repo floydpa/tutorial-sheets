@@ -22,23 +22,30 @@ WS_OTHER_DIVIDENDS  = "other"          # Other dividend information
 
 # Worksheets created/updates
 WS_SECURITY_INFO    = "Sec Info"       # "Security Information"
+WS_POSITION_STATIC  = "By Pos Static"
 WS_POSITION_INCOME  = "By Position"
 WS_SEC_DIVIDENDS_HL = "By SecurityHL"  # Temporary
 WS_SEC_DIVIDENDS_FE = "By SecurityFE"  # Temporary
-WS_SEC_DIVIDENDS    = "By Security (new)"
+WS_SEC_DIVIDENDS    = "By Security"
 
 
 #-----------------------------------------------------------------------
-# Workshet Object for 'Security Info'
+# Base class for a worksheet within a workbook
 #-----------------------------------------------------------------------
 
-class WsSecInfo:
-    def __init__(self, forever_income, secu):
-        self._forever_income = forever_income
-        self._workbook       = forever_income.workbook()
-        self._wsname         = WS_SECURITY_INFO
-        self._secu           = secu
-  
+class Ws:
+    def __init__(self, wbInstance, wsname):
+        self._wbinstance = wbInstance
+        self._workbook   = wbInstance.workbook()
+        self._wsname     = wsname
+        self._df         = None
+    
+    def wbinstance(self):
+        return self._wbinstance
+    
+    def spreadsheet_id(self):
+        return self.wbinstance().spreadsheet_id()
+      
     def workbook(self):
         return self._workbook
     
@@ -48,7 +55,29 @@ class WsSecInfo:
     def df(self):
         return self._df
     
-    def create_security_info(self):
+
+#-----------------------------------------------------------------------
+# Worksheet Object for 'Security Info'
+#-----------------------------------------------------------------------
+
+class WsSecInfo(Ws):
+    def __init__(self, wbInstance, secu):
+        Ws.__init__(self, wbInstance, WS_SECURITY_INFO)
+        # Process contents of all json security files
+        self._secu = secu
+    
+    # Construct base set of security information
+    #   sname       MYI
+    #   lname       MURRAY INTERNATIONAL TRUST PLC
+    #   stype       ORDINARY 5p SHARES
+    #   alias       MYI.L
+    #   structure	IT
+    #   sector      Global Equity Income
+    #   ISIN        GB00BQZCCB79
+    #   SEDOL
+    #   fund-class  [For OEIC] Either Income or Accumulation			
+
+    def create_security_info(self,secu):
         # Column headings for Security Info sheet
         sec_info_cols = [
             'sname', 'lname', 'stype',
@@ -68,21 +97,52 @@ class WsSecInfo:
 
         # Read json files and create one row for each
         lst = []
-        for sec in self._secu.securities():
-            defn = self._secu.find_security(sec).data()
+        for sec in secu.securities():
+            defn = secu.find_security(sec).data()
             for k in entries_to_remove:
                 defn.pop(k, None)
             lst.append(defn)
 
         # Convert to dataframe with NaN replaced with None and all columns 'str'
         df = pd.DataFrame(lst)[sec_info_cols].astype(str).sort_values('sname')
-        self._df = df.replace({'None':None, 'nan':None})
+        df = df.replace({'None':None, 'nan':None})
 
-        return self._df
+        return df
     
+    # Apply formatting to newly created/updated sheet
+    def apply_formatting(self):
+        # Retrieve worksheet details for formatting requests
+        worksheet = self.workbook().worksheet(self.wsname())
+
+        # Make the headings bold
+        worksheet.format("A1:I1", {"textFormat": {"bold": True}})
+
+        requests = []
+        # Step 1: Change font to Arial size 8
+        requests.append(fmt_req_font(worksheet))
+        # Step 2: Turn on filters for the first row
+        requests.append(fmt_req_autofilter(worksheet))
+        # Step 3: Grey fill colour for the header row
+        requests.append(fmt_hdr_bgcolor(worksheet, RGB_GREY))
+        # Step 4: Auto resize all columns to fit their content
+        requests.append(fmt_req_autoresize(worksheet))
+                        
+        # Execute the requests
+        response = self.wbinstance().service().spreadsheets().batchUpdate(
+                spreadsheetId=self.spreadsheet_id(), 
+                body={'requests': requests}
+            ).execute()
+        
+        logging.debug(f"service request response {response}")
+
+
     def refresh(self):
-        df = self.create_security_info()
-        self._forever_income.df_to_worksheet(df, self.wsname())
+        # Create dataframe from individual security definitions
+        self._df = self.create_security_info(self._secu)
+        # Create/update worksheet with dataframe
+        self.wbinstance().df_to_worksheet(self.df(), self.wsname())
+        # Apply formatting to this worksheet
+        self.apply_formatting()
 
     def __repr__(self):
         return self.df()
@@ -92,21 +152,13 @@ class WsSecInfo:
 # Handling for worksheet 'By Position'
 #-----------------------------------------------------------------------
 
-class WsByPosition:
-    def __init__(self, forever_income):
-        self._forever_income = forever_income
-        self._workbook       = forever_income.workbook()
+class WsByPosition(Ws):
+    def __init__(self, wbInstance):
+        Ws.__init__(self, wbInstance, WS_POSITION_INCOME)
         self._positions_list = []
-        self._df = None
-
-    def workbook(self):
-        return self._workbook
     
     def positions_list(self):
         return self._positions_list
-    
-    def df(self):
-        return self._df
 
     # Construct the base set of position information
     # This consists of 9 columns with sample imformation as follows:
@@ -125,7 +177,7 @@ class WsByPosition:
     
         for pos in positions:
             acc = pos.account()
-            acc_id = "%s_%s_%s" % (acc.usercode(), pos.platform(), pos.account_type())
+            acc_id = "%s_%s_%s" % (acc.usercode(), pos.account_type(), pos.platform())
             p = {
                 'Who':          pos.username(),
                 'AccType':      pos.account_type(),
@@ -142,19 +194,27 @@ class WsByPosition:
             logging.debug("position_info(p=%s)", p)
             self._positions_list.append(p)
     
+        # Get list of static positions (as dicts) to tag on
+        other = self.wbinstance().worksheet_to_df(WS_POSITION_STATIC).to_dict(orient='records')
+        for p in other:
+            self._positions_list.append(p)
+
+        logging.debug("psitions_list=%s"%(self._positions_list))
+
+        # Create dataframe of full list of positions in sorted order
         self._df = pd.DataFrame(self._positions_list).sort_values(
             ['Who','AccType','Platform','Value'],ascending=[True,True,True,False]
         ).reset_index(drop=True)
 
-        # logging.debug("position_info(df.dtypes=%s)", self._df.dtypes)
-        # print(df)
+        logging.debug("position_info(df.dtypes=%s)", self._df.dtypes)
+        logging.debug("%s"%(self._df))
 
         return self._df
 
     # Apply formatting to newly created/updated sheet
     def apply_formatting(self):
         # Retrieve worksheet details for formatting requests
-        worksheet = self.workbook().worksheet(WS_POSITION_INCOME)
+        worksheet = self.workbook().worksheet(self.wsname())
 
         requests = []
         # Step 1: Change font to Arial size 8
@@ -178,8 +238,8 @@ class WsByPosition:
         requests.append(fmt_columns_hjustify(worksheet, 11, 12, 'CENTER'))
                         
         # Execute the requests
-        response = self._forever_income.service().spreadsheets().batchUpdate(
-                spreadsheetId=self._forever_income._spreadsheet_id, 
+        response = self.wbinstance().service().spreadsheets().batchUpdate(
+                spreadsheetId=self.spreadsheet_id(), 
                 body={'requests': requests}
             ).execute()
         
@@ -194,7 +254,7 @@ class WsByPosition:
 
         # Use new df to add/update position income sheet
         # Allow 4 additional columns for formulas to be added later
-        self._forever_income.df_to_worksheet(df, WS_POSITION_INCOME, 0, 4)
+        self.wbinstance().df_to_worksheet(df, self.wsname(), 0, 4)
 
         # Add 4 columns of formulas with dividend & income information
         # Note that it's too slow to update one cell at a time
@@ -215,7 +275,7 @@ class WsByPosition:
         cell_range = f"K1:N{r}"
         # print(f"range={cell_range}")
         # print(formulas)
-        sheet = self.workbook().worksheet(WS_POSITION_INCOME)
+        sheet = self.workbook().worksheet(self.wsname())
         sheet.update(cell_range, formulas, value_input_option='USER_ENTERED')
 
         # Make the headings bold for the 4 formula cooumns
@@ -225,24 +285,35 @@ class WsByPosition:
         self.apply_formatting()
 
 
-class WbIncome:
+class GspreadAuth:
     def __init__(self):
-        scopes   = ["https://www.googleapis.com/auth/spreadsheets"]
-        creds    = Credentials.from_service_account_file("credentials.json", scopes=scopes)
-        client   = gspread.authorize(creds)
-        sheet_id = "1-W8w2t3HXCG9zNy6RQ4w12zkCrX_jntvQ24xEinhxG4"
+        scopes = ["https://www.googleapis.com/auth/spreadsheets"]
+        creds  = Credentials.from_service_account_file("credentials.json", scopes=scopes)
 
-        self._workbook = client.open_by_key(sheet_id)
-
-        # Parameters needed for batch requests
-        self._spreadsheet_id = sheet_id
+        self._client  = gspread.authorize(creds)
         self._service = build('sheets', 'v4', credentials=creds)
 
-    def workbook(self):
-        return self._workbook
+    def client(self):
+        return self._client
     
     def service(self):
         return self._service
+
+
+class GsWorkbook:
+    def __init__(self, gsauth, spreadsheet_id):
+        self._gsauth = gsauth
+        self._spreadsheet_id = spreadsheet_id
+        self._workbook = self.client().open_by_key(spreadsheet_id)
+
+    def client(self):
+        return self._gsauth.client()
+    
+    def service(self):
+        return self._gsauth.service()
+    
+    def workbook(self):
+        return self._workbook
     
     def spreadsheet_id(self):
         return self._spreadsheet_id
@@ -290,30 +361,6 @@ class WbIncome:
         hrange = f"A1:{chr(ord('A')+len(hdr)-1)}1"
         sheet.format(hrange, {"textFormat": {"bold": True}})
 
-
-    def get_fillcolour(self, range_name='Sheet1!A1'):
-        # Retrieve cell format data
-        result = self.service().spreadsheets().get(
-            spreadsheetId=self._spreadsheet_id, 
-            ranges=range_name, 
-            fields='sheets(data(rowData(values(userEnteredFormat))))'
-        ).execute()
-
-        # Extract the background color (RGB) from the response
-        cell_data = result['sheets'][0]['data'][0]['rowData'][0]['values'][0]['userEnteredFormat']
-
-        # Check if the backgroundColor field exists
-        if 'backgroundColor' in cell_data:
-            background_color = cell_data['backgroundColor']
-            red = background_color.get('red', 1)   # Default to 1 if color is white
-            green = background_color.get('green', 1)
-            blue = background_color.get('blue', 1)
-
-            return {red, green, blue}
-        else:
-            return None
-        
-
     def __repr__(self):
         s = "WORKBOOK:"
         for ws in self.worksheet_list():
@@ -321,13 +368,33 @@ class WbIncome:
         return s
     
 
+class WbIncome(GsWorkbook):
+    def __init__(self, gsauth):
+        spreadsheet_id = "1-W8w2t3HXCG9zNy6RQ4w12zkCrX_jntvQ24xEinhxG4"
+        GsWorkbook.__init__(self, gsauth, spreadsheet_id)
+
+class WbSecMaster(GsWorkbook):
+    def __init__(self, gsauth):    
+        spreadsheet_id = "1as92X_ywzObw0kYIoFVeMQ070EJ006DQepRYCwPgzSE"
+        GsWorkbook.__init__(self, gsauth, spreadsheet_id)
+
+
 if __name__ == '__main__':
-    ForeverIncome = WbIncome()
-    # print(ForeverIncome)
+
+    gsauth = GspreadAuth()
+    ForeverIncome = WbIncome(gsauth)
+    print(ForeverIncome)
+    SecurityMaster = WbSecMaster(gsauth)
+    print(SecurityMaster)
+
+    # Get contents of worksheet as a DataFrame
+    df = SecurityMaster.worksheet_to_df("Security Information")
+    print(df)
 
     # Get contents of 'hl' worksheet as a DataFrame
-    df = ForeverIncome.worksheet_to_df("hl")
+    df = SecurityMaster.worksheet_to_df("hl")
     print(df)
+
 
     def read_sample(workbook):
         worksheet_list = map(lambda x: x.title, workbook.worksheets())

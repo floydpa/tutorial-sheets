@@ -180,3 +180,29 @@ def fmt_columns_hjustify(worksheet, cfirst, clast, justification, rfirst=1):
             'fields': 'userEnteredFormat.horizontalAlignment'
         }
     }
+
+
+#------------------------------------------------------------------------------
+# Requests for formatting information
+
+def get_fillcolour(service, spreadsheet_id, range_name='Sheet1!A1'):
+    # Retrieve cell format data
+    result = service.spreadsheets().get(
+        spreadsheetId=spreadsheet_id, 
+        ranges=range_name, 
+        fields='sheets(data(rowData(values(userEnteredFormat))))'
+    ).execute()
+
+    # Extract the background color (RGB) from the response
+    cell_data = result['sheets'][0]['data'][0]['rowData'][0]['values'][0]['userEnteredFormat']
+
+    # Check if the backgroundColor field exists
+    if 'backgroundColor' in cell_data:
+        background_color = cell_data['backgroundColor']
+        red = background_color.get('red', 1)   # Default to 1 if color is white
+        green = background_color.get('green', 1)
+        blue = background_color.get('blue', 1)
+
+        return {red, green, blue}
+    else:
+        return None
