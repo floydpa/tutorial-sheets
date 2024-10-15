@@ -154,6 +154,7 @@ class WsDividendsFE(Ws):
     def normalise_divis(self):
         df = self.rawdata()
         # Convert 'Amount' column to float
+        df['Scale']  = df['Scale'].astype(float)
         df['Amount'] = df['DividendAmount'].astype(float)
         # Some dividends (e.g. RL) are expressed in pence, so scale up
         df['Amount'] = df['Amount'] * df['Scale']
@@ -220,6 +221,7 @@ class WsDividendsBySecurity(Ws):
 
         # Get other dividends (already aggregated)
         other = wbSource.worksheet_to_df(WS_OTHER_DIVIDENDS)
+        other['AnnualDividend'] = other['AnnualDividend'].astype(float)
 
         # Aggregate normalised data to get annual dividend information
         self._df = pd.concat([hl.aggregated(), fe.aggregated(), other], 

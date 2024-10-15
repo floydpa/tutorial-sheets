@@ -4,6 +4,7 @@ import pandas as pd
 import re
 import sys
 import os
+import glob
 
 import logging
 import datetime
@@ -60,13 +61,20 @@ class Platform:
         return positions
 
     def download_dirname(self):
-        return "/mnt/chromeos/MyFiles/Downloads"
+        return "%s/Downloads" % (os.getenv('HOME'))
 
     def userdata_dirname(self):
         return "%s/UserData" % (os.getenv('HOME'))
     
     def download_filename(self, username, accountType):
         return None
+
+    def most_recent_download(self, pattern):
+        files = glob.glob(os.path.join(self.download_dirname(), pattern))
+        if not files:
+            return None
+        else:
+            return max(files, key=os.path.getmtime)
 
     def current_filename(self, userCode, accountType):
         destlink   = self.latest_file(userCode,accountType)
@@ -124,14 +132,25 @@ class Platform:
 
     def update_latest_link(self, downloadFile, destFile, destLink, removeSource=True):
         """Update the 'latest' link to point to the new file and remove downloaded file"""
-        os.unlink(destLink)
-        os.symlink(destFile, destLink)
-        logging.debug("symlink(%s,%s)" % (destFile, destLink))
+        original_directory = os.getcwd()
+        target_directory   = os.path.dirname(destFile)
+        target_filename    = os.path.basename(destFile)
+        try:
+            os.chdir(target_directory)
+            os.unlink(destLink)
+            os.symlink(target_filename, destLink)
+            logging.debug("symlink(%s:%s,%s)" % (target_directory, target_filename, destLink))
 
-        # Finally remove the source file which had been downloaded
-        if removeSource:
-            logging.debug("unlink(%s)" % (downloadFile))
-            os.unlink(downloadFile)
+            # Finally remove the source file which had been downloaded
+            if removeSource:
+                logging.debug("unlink(%s)" % (downloadFile))
+                os.unlink(downloadFile)
+
+        except OSError as e:
+            logging.error(f"Error: {e}")
+
+        finally:
+            os.chdir(original_directory)
 
     def __repr__(self):
         return "PLATFORM(%s,%s)" % (self.name(), self.name(True))
@@ -144,13 +163,10 @@ class AJB(Platform):
 
     def download_filename(self, userCode, accountType):
         logging.debug("download_filename(%s,%s)"%(userCode,accountType))
-        if userCode == 'C' and accountType == 'ISA':
-            filename = "portfolio-AB9F2PI-ISA.csv"
-        elif userCode == 'P' and accountType == 'Pens':
-            filename = "portfolio-A20782S-SIPP.csv"
-        else:
-            filename = None
-        return "%s/%s" % (self.download_dirname(), filename) if filename else None
+        if accountType == 'Pens':
+            accountType = 'SIPP'
+        pattern = f"portfolio-*{accountType}.csv"
+        return self.most_recent_download(pattern)
 
     def download_formname(self):
         return "FileDownloadForm"
@@ -173,7 +189,7 @@ class AJB(Platform):
             else:
                 sym = inv
 
-            qty = float(re.sub(',', '', df['Quantity'][n]))
+            qty   = float(re.sub(',', '', df['Quantity'][n]))
             price = float(df['Price'][n]) * 100.0
             value = float(re.sub(',', '', df['Value (£)'][n]))
             cost  = float(re.sub(',', '', df['Cost (£)'][n]))
@@ -217,20 +233,29 @@ class II(Platform):
         self._fullname = "Interactive Investor"
 
     def download_filename(self, userCode, accountType):
+        logging.debug("download_filename(%s,%s)"%(userCode,accountType))
+        download_file = self.most_recent_download("*.csv")
         dt = datetime.datetime.now().strftime("%Y%m%d")
-        destname = "%s/%s_%s_%s_%s.csv" % (self.download_dirname(), userCode, self.name(), accountType, dt)
+        dest_file = "%s/%s_%s_%s_%s.csv" % (self.download_dirname(), userCode, accountType, self.name(), dt)
 
-        # Get list of files in download directory, newest first
-        paths = sorted(Path(self.download_dirname()).iterdir(), key=os.path.getmtime, reverse=True)
-        for f in paths:
-            print("downloaded file=", f)
-            # if re.search('^.*\.csv$', f):
-            #     print("csvfile=", f)
-            print("destname=", destname)
-            os.rename(f, destname)
-            break
+        # Copy contents to a new file with some changes on the way
+        with open(download_file, 'r') as src, open(dest_file, 'w') as dst:
+            first_line_processed = False
+            for line in src:
+                # Strip strange characters before 'Symbol,Name,'
+                if not first_line_processed:
+                    if "Symbol,Name," in line:
+                        line = line.split("Symbol,Name,", 1)[1]  # Keep only after "Symbol,Name,"
+                        line = "Symbol,Name," + line  # Add the prefix back
+                    first_line_processed = True
 
-        return destname
+                # Skip lines starting with '""'
+                if not line.startswith('""'):
+                    dst.write(line)
+
+        os.unlink(download_file)
+
+        return dest_file
 
     def download_formname(self):
         return "FileDownloadCashForm"
@@ -264,6 +289,9 @@ class II(Platform):
             if sym in ('Cash GBP.L'):
                 security = secu.find_security('Cash')
             else:
+                # Skip worthless positions from fractions of units
+                if value < 1.0:
+                    continue
                 security = secu.find_security(sym)
 
             pos = Position(security, qty, price, value, cost, self.vdate())
@@ -285,14 +313,7 @@ class II(Platform):
         fpout = open(destfile, "w")
         with open(filename, 'r', encoding='utf-8-sig') as fpin:
             for line in fpin:
-                # Strip the leading feff characters from header line
-                if "Symbol," in line:
-                    line = 'Symbol,Name,Qty,Price,Change,Chg %,Market Value £,Market Value,Book Cost,Gain,Gain %,Average Price\n'
-                    line = re.sub('^.*Symbol,', 'Symbol,', line)
-
-                # Strip Totals lines at the end
-                if not re.match('"",', line):
-                    fpout.write(line)
+                fpout.write(line)
 
             line = '"Cash","Cash GBP","%.2f","1","","","£%.2f","£%.2f","£%.2f","","",""\n' % (cashAmount, cashAmount, cashAmount, cashAmount)
             fpout.write(line)
@@ -310,6 +331,10 @@ class AV(Platform):
         Platform.__init__(self)
         self._fullname = "Aviva"
 
+    def download_filename(self, userCode, accountType):
+        pattern = "AvivaPortfolio*.csv"
+        return self.most_recent_download(pattern)
+    
     def load_positions(self, secu, userCode, accountType, summary_file=None):
         positions = []
         if summary_file is None:
@@ -333,6 +358,27 @@ class AV(Platform):
 
         return positions
 
+    def update_positions(self, userCode, accountType):
+        destfile = self.dated_file(userCode, accountType)
+        destlink = self.latest_file(userCode,accountType)
+        filename = self.download_filename(userCode,accountType)
+
+        logging.debug("source=%s" % (filename))
+        logging.debug("destfile=%s" % (destfile))
+        logging.debug("destlink=%s" % (destlink))
+
+        # Copy all lines across
+        fpout = open(destfile, "w")
+        with open(filename, 'r', encoding='utf-8-sig') as fpin:
+            for line in fpin:
+                fpout.write(line)
+        fpout.close()
+        fpin.close()
+
+        # Update latest link to point to newly created file
+        # Remove the source file from the download area
+        self.update_latest_link(filename, destfile, destlink)
+
     def download_formname(self):
         return "getPositionsForm"
 
@@ -347,7 +393,47 @@ class NPI(Platform):
 
     def update_positions(self, userCode, accountType, cashAmount):
         return self.update_savings(userCode, accountType, cashAmount)
-    
+
+
+class CashAccount(Platform):
+    def __init__(self, organisation):
+        Platform.__init__(self)
+        self._fullname = organisation
+
+    def download_formname(self):
+        return "CashForm"
+
+    def update_positions(self, userCode, accountType, cashAmount):
+        return self.update_savings(userCode, accountType, cashAmount)
+
+class GSM(CashAccount):
+    def __init__(self):
+        CashAccount.__init__(self, "Marcus")
+
+class FSB(CashAccount):
+    def __init__(self):
+        CashAccount.__init__(self, "First Savings Bank")
+
+class CSB(CashAccount):
+    def __init__(self):
+        CashAccount.__init__(self, "Charter Savings Bank")
+
+class NW(CashAccount):
+    def __init__(self):
+        CashAccount.__init__(self, "Nationwide")
+
+class FD(CashAccount):
+    def __init__(self):
+        CashAccount.__init__(self, "First Direct")
+
+class NSI(CashAccount):
+    def __init__(self):
+        CashAccount.__init__(self, "National Savings & Investments")
+
+class CU(CashAccount):
+    def __init__(self):
+        CashAccount.__init__(self, "Aviva CU")
+
 
 if __name__ == '__main__':
     
@@ -363,10 +449,26 @@ if __name__ == '__main__':
     # print(a.name())
 
     # p = AJB()
-    # print(p.name(True))
-    # print(p.latest_file('P','ISA'))
+    # print(p.download_filename('P', 'ISA'))
 
-    # Set 'latest' symlink to point to dated file associated with YYYYMMDD (today)
-    # There's no need to specify a cash amount for AJB as it's in the downloaded file
+    p = GSM()
+    p = NW()
+    p = FSB()
+    p = CSB()
+    print(p.latest_file('C','Sav'))
+    for pos in p.load_positions(secu, 'C', 'Sav'):
+        print (pos)
+
+    p = CU()
+    print(p.latest_file('C','Pens'))
+    for pos in p.load_positions(secu, 'C', 'Pens'):
+        print (pos)
+
+    p = NSI()
+    p = FD()
+    print(p.latest_file('P','Sav'))
+    for pos in p.load_positions(secu, 'P', 'Sav'):
+        print (pos)
+
 
 

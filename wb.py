@@ -2,8 +2,10 @@
 # Main processing for the Google Sheets workbook
 #-----------------------------------------------------------------------
 
+import os
 import logging
 import pandas as pd
+import csv
 import gspread
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
@@ -19,6 +21,8 @@ from wbformat import RGB_GREY
 WS_HL_DIVIDENDS     = "hl"             # Hargreaves Lansdown dividend information
 WS_FE_DIVIDENDS     = "fe"             # FE Trustnet dividend information
 WS_OTHER_DIVIDENDS  = "other"          # Other dividend information
+
+WS_AVIVA_PENS       = "Aviva Pens"     # Data pasted from web page
 
 # Worksheets created/updates
 WS_SECURITY_INFO    = "Sec Info"       # "Security Information"
@@ -195,7 +199,10 @@ class WsByPosition(Ws):
             self._positions_list.append(p)
     
         # Get list of static positions (as dicts) to tag on
-        other = self.wbinstance().worksheet_to_df(WS_POSITION_STATIC).to_dict(orient='records')
+        df = self.wbinstance().worksheet_to_df(WS_POSITION_STATIC)
+        df['Quantity'] = df['Quantity'].astype('float')
+        df['Value'] = df['Value'].astype('float')
+        other = df.to_dict(orient='records')
         for p in other:
             self._positions_list.append(p)
 
@@ -336,7 +343,13 @@ class GsWorkbook:
         worksheet = self.workbook().worksheet(worksheet_name)
         
         # Get all data from the worksheet and convert to DataFrame
-        df = pd.DataFrame(worksheet.get_all_records())
+        # df = pd.DataFrame(worksheet.get_all_records())
+
+        # Problem with above approach is stripping of leading zeros on strings
+        # Fetch raw values from the worksheet (including header)
+        values = worksheet.get_values()
+        # Create a DataFrame from the raw values using first row as header
+        df = pd.DataFrame(values[1:], columns=values[0])
 
         return df
     
@@ -379,6 +392,32 @@ class WbSecMaster(GsWorkbook):
         GsWorkbook.__init__(self, gsauth, spreadsheet_id)
 
 
+def create_aviva_download_file(ForeverIncome, SecurityMaster):
+    # Get position data from worksheet
+    df = ForeverIncome.worksheet_to_df(WS_AVIVA_PENS)
+    df.drop(['LastStmtUnits','AnnualMgmtCharge','NetUnits'], axis=1, inplace=True)
+    df['FundName'] = df['FundName'].str.split('\n').str[0]
+    df['FundName'] = df['FundName'].str.upper()
+    df = df[df['Qty'] != 0.0]
+
+    # Fetch raw values from the worksheet (including header)
+    secinfo = SecurityMaster.worksheet_to_df("Sec Info")
+    # Ensure 'SEDOL' column is treated as a string, so as not to lose leading '0'
+    secinfo['SEDOL'] = secinfo['SEDOL'].astype(str)
+
+    secinfo = secinfo[['lname','SEDOL']].rename(columns={'lname': 'FundName'})
+    secinfo = secinfo[secinfo['FundName'].str.startswith('AVIVA PENSION')]
+    print(secinfo)
+    df = df.merge(secinfo,on='FundName',how='left')
+    df = df.rename(columns={'FundName': 'Description', 'SEDOL':'Symbol'})
+    df = df[['Symbol','Qty','Description','Price','Market Value']]
+    print(df)
+    f_out = "%s/Downloads/AvivaPortfolio.csv" % (os.getenv('HOME'))
+    df.to_csv(f_out, index=False, quotechar='"', quoting=csv.QUOTE_ALL)
+
+    return f_out
+
+
 if __name__ == '__main__':
 
     gsauth = GspreadAuth()
@@ -387,14 +426,27 @@ if __name__ == '__main__':
     SecurityMaster = WbSecMaster(gsauth)
     print(SecurityMaster)
 
-    # Get contents of worksheet as a DataFrame
-    df = SecurityMaster.worksheet_to_df("Security Information")
-    print(df)
+    #---------------------------------------------------------------------------------------------
+    # Consume Aviva pension information from Income workbook and create download file.
+    # Create in same format as stored UserData file, e.g.
+    # "Symbol","Qty","Description","Price","Market Value"
+    # "0153238","14,287.41","Aviva Pension Baillie Gifford Managed FP","518.47p","£74,076.31"
+    # "B5LMZB5","35,566.24","Aviva Pension Artemis Strategic Bond FP","212.33p","£75,517.92"
+    # "B66RGK8","10,075.50","Aviva Pension L&G Global Real Estate Equity Index FP","252.98p","£25,489.22"
+    # "154413","15,440.58","Aviva Pension BNY Mellon Multi-Asset Balanced FP","482.41p","£74,487.13"
+    #---------------------------------------------------------------------------------------------
 
-    # Get contents of 'hl' worksheet as a DataFrame
-    df = SecurityMaster.worksheet_to_df("hl")
-    print(df)
+    if True:
+        create_aviva_download_file(ForeverIncome, SecurityMaster)
 
+    if False:
+        # Get contents of worksheet as a DataFrame
+        df = SecurityMaster.worksheet_to_df("Security Information")
+        print(df)
+
+        # Get contents of 'hl' worksheet as a DataFrame
+        df = SecurityMaster.worksheet_to_df("hl")
+        print(df)
 
     def read_sample(workbook):
         worksheet_list = map(lambda x: x.title, workbook.worksheets())
