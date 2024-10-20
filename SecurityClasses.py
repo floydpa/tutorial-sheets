@@ -1,7 +1,7 @@
 # Define classes for handling the different types of securities
 
 import os
-import datetime
+from datetime import datetime, timedelta
 import time
 import json
 import logging
@@ -107,7 +107,7 @@ class Security:
         self._stale = False
 
         try:
-            now = datetime.datetime.now()
+            now = datetime.now()
             one_year_ago = "%04d%02d%02d" % (now.year-1, now.month, now.day)
             for d in self._data['divis']['prev']:
                 if d['payment'] < one_year_ago or d['ex-div'] < one_year_ago:
@@ -136,8 +136,8 @@ class Security:
         freq = self.payout_frequency()
         paydate = self.divi_paydate()
         if freq == 'M' and paydate:
-            year = datetime.datetime.today().year
-            month = datetime.datetime.today().month
+            year = datetime.today().year
+            month = datetime.today().month
             for i in range(12):
                 dt = "%4d%02d%02d"%(year,month,paydate)
                 tag = "month%02d"%(month)
@@ -181,6 +181,61 @@ class Security:
                 else:
                     payments[d['payment']] = self.price() * self.fund_period_yield() / 100.0
         return payments
+
+    # Return dict of projected dividend payments
+    def projected_dividends(self, end_projection=None):
+        if end_projection is None:
+            end_projection = datetime.today() + timedelta(weeks=13)
+        
+        projected = []
+        for divi in self.recent_divis():
+            dt = divi['payment']
+            dt_obj = datetime.strptime(dt, "%Y%m%d")
+            if dt_obj >= datetime.today():
+                div_type = " * "
+                div_date = dt
+            else:
+                # Assume same dividend will be paid in a year
+                try:
+                    dt_obj = dt_obj.replace(year=dt_obj.year + 1)
+                except ValueError:
+                    dt_obj = dt_obj.replace(month=2, day=28, year=dt_obj.year + 1)
+
+                if dt_obj < datetime.today() or dt_obj > end_projection:
+                    continue
+                
+                div_type = "Est"
+                div_date = dt_obj.strftime("%Y%m%d")
+
+            # Are previous dividends defined?
+            try:
+                prev = self._data['divis']['prev']
+            except:
+                prev = None
+
+            if prev is None:
+                unit = '%'
+            else:
+                try:
+                    unit = divi['unit']
+                except:
+                    unit = '%'
+
+            # Is the dividend calculated based on a yield (% of value) or price (qty * price)?
+            if unit == '%':
+                try:
+                    amount = self._data['fund-yield']
+                except:
+                    amount = 0.0
+            else:
+                try:
+                    amount = divi['amount']
+                except:
+                    amount = ''
+
+            projected.append({'type':div_type, 'payment':div_date, 'amount':amount, 'unit':unit})
+
+        return projected
 
     # Return dict of ex-div dates with amounts
     def dividend_declarations(self):
@@ -368,8 +423,8 @@ class Security:
         if self.recent_divis():
             for d in self.recent_divis():
                 tag = "%s" % (d['tag'])
-                xdate = datetime.datetime.strptime(d['ex-div'], '%Y%m%d').strftime('%d-%b-%Y')
-                pdate = datetime.datetime.strptime(d['payment'], '%Y%m%d').strftime('%d-%b-%Y')
+                xdate = datetime.strptime(d['ex-div'], '%Y%m%d').strftime('%d-%b-%Y')
+                pdate = datetime.strptime(d['payment'], '%Y%m%d').strftime('%d-%b-%Y')
                 if 'amount' in d.keys():
                     value = "Ex-Dividend %s Payment %s Amount %.3f%s" % (xdate, pdate, d['amount'], d['unit'])
                 else:
@@ -396,7 +451,7 @@ class Security:
                 urls.append({'tag': "URL-%s"%(tag), 'value':self.info()[tag]})
             detail.append({'tag': "URL-list", 'value':urls})
 
-        mdate = datetime.datetime.strptime(self.mdate(), '%Y%m%d').strftime('%d-%b-%Y')
+        mdate = datetime.strptime(self.mdate(), '%Y%m%d').strftime('%d-%b-%Y')
         detail.append({'tag': 'Last Updated', 'value': mdate})
         detail.append({'tag': 'Stale', 'value': 'Yes' if self.is_stale() else 'No'})
 

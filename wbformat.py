@@ -12,7 +12,7 @@ RGB_GREY   = {"red": 0.80, "green": 0.80, "blue": 0.80}
 #------------------------------------------------------------------------------
 # Formatting requests
 
-def fmt_req_font(worksheet):
+def fmt_req_font(worksheet, family='Arial', size=8):
     return {
         'repeatCell': {
             'range': {
@@ -21,8 +21,8 @@ def fmt_req_font(worksheet):
             'cell': {
                 'userEnteredFormat': {
                     'textFormat': {
-                        'fontFamily': 'Arial',
-                        'fontSize': 8
+                        'fontFamily': family,
+                        'fontSize': size
                         }
                     }
                 },

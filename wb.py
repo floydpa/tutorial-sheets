@@ -25,12 +25,14 @@ WS_OTHER_DIVIDENDS  = "other"          # Other dividend information
 WS_AVIVA_PENS       = "Aviva Pens"     # Data pasted from web page
 
 # Worksheets created/updates
-WS_SECURITY_INFO    = "Sec Info"       # "Security Information"
+WS_SECURITY_INFO    = "Security Information"
+WS_SECURITY_URLS    = "Detailed Information"
 WS_POSITION_STATIC  = "By Pos Static"
 WS_POSITION_INCOME  = "By Position"
 WS_SEC_DIVIDENDS_HL = "By SecurityHL"  # Temporary
 WS_SEC_DIVIDENDS_FE = "By SecurityFE"  # Temporary
 WS_SEC_DIVIDENDS    = "By Security"
+WS_EST_INCOME       = "Estimated Income"
 
 
 #-----------------------------------------------------------------------
@@ -88,7 +90,8 @@ class WsSecInfo(Ws):
             'alias',
             'structure', 'sector', 
             'ISIN', 'SEDOL',
-            'fund-class'
+            'fund-class',
+            'div-freq'
         ]
     
         # Ignore these columns from json security files
@@ -103,8 +106,13 @@ class WsSecInfo(Ws):
         lst = []
         for sec in secu.securities():
             defn = secu.find_security(sec).data()
+            try:
+                freq = defn['divis']['freq']
+            except:
+                freq = None
             for k in entries_to_remove:
                 defn.pop(k, None)
+            defn['div-freq'] = freq
             lst.append(defn)
 
         # Convert to dataframe with NaN replaced with None and all columns 'str'
@@ -143,6 +151,82 @@ class WsSecInfo(Ws):
     def refresh(self):
         # Create dataframe from individual security definitions
         self._df = self.create_security_info(self._secu)
+        # Create/update worksheet with dataframe
+        self.wbinstance().df_to_worksheet(self.df(), self.wsname())
+        # Apply formatting to this worksheet
+        self.apply_formatting()
+
+    def __repr__(self):
+        return self.df()
+
+
+#-----------------------------------------------------------------------
+# Worksheet Object for 'Security Urls'
+#-----------------------------------------------------------------------
+
+class WsSecUrls(Ws):
+    def __init__(self, wbInstance, secu):
+        Ws.__init__(self, wbInstance, WS_SECURITY_URLS)
+        # Process contents of all json security files
+        self._secu = secu
+    
+    # List of URLs with additional information
+    # SecurityId    Short name, e.g. FCIT
+    # Platform      hl, fe or aic	
+    # Url           E.g. Link to Hargreaves Lansdown detailed information
+
+    def create_security_urls(self,secu):
+        urls = []
+        # Each security may have none, one or more URLs associated
+        for sec in secu.securities():
+            defn = secu.find_security(sec).data()
+            try:
+                info = defn['info']
+            except:
+                info = None
+
+            if info is not None:
+                for platform in info.keys():
+                    urls.append({
+                        'SecurityId':   defn['sname'],
+                        'Platform':     platform,
+                        'Url':          info[platform]
+                    })
+
+        # Convert to dataframe with all columns 'str'
+        df = pd.DataFrame(urls)[['SecurityId','Platform','Url']].astype(str)
+        df = df.sort_values(['SecurityId','Platform'])
+
+        return df
+    
+    # Apply formatting to newly created/updated sheet
+    def apply_formatting(self):
+        # Retrieve worksheet details for formatting requests
+        worksheet = self.workbook().worksheet(self.wsname())
+
+        # Make the headings bold
+        worksheet.format("A1:C1", {"textFormat": {"bold": True}})
+
+        requests = []
+        # Step 1: Change font to Arial 10
+        requests.append(fmt_req_font(worksheet, 'Arial', 10))
+        # Step 2: Grey fill colour for the header row
+        requests.append(fmt_hdr_bgcolor(worksheet, RGB_GREY))
+        # Step 3: Auto resize all columns to fit their content
+        requests.append(fmt_req_autoresize(worksheet))
+                        
+        # Execute the requests
+        response = self.wbinstance().service().spreadsheets().batchUpdate(
+                spreadsheetId=self.spreadsheet_id(), 
+                body={'requests': requests}
+            ).execute()
+        
+        logging.debug(f"service request response {response}")
+
+
+    def refresh(self):
+        # Create dataframe from individual security definitions
+        self._df = self.create_security_urls(self._secu)
         # Create/update worksheet with dataframe
         self.wbinstance().df_to_worksheet(self.df(), self.wsname())
         # Apply formatting to this worksheet
@@ -401,7 +485,7 @@ def create_aviva_download_file(ForeverIncome, SecurityMaster):
     df = df[df['Qty'] != 0.0]
 
     # Fetch raw values from the worksheet (including header)
-    secinfo = SecurityMaster.worksheet_to_df("Sec Info")
+    secinfo = SecurityMaster.worksheet_to_df(WS_SECURITY_INFO)
     # Ensure 'SEDOL' column is treated as a string, so as not to lose leading '0'
     secinfo['SEDOL'] = secinfo['SEDOL'].astype(str)
 
